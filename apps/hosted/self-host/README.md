@@ -267,6 +267,17 @@ set `EXECUTOR_APP_UI_BASE_URL` to a separate HTTPS base such as
 same server, with a matching TLS certificate. App addresses take the form
 `<app-slug>--<organization-slug>.apps.example.com`.
 
+No site can show an app page in a frame unless you list its origin in
+`EXECUTOR_APP_UI_FRAME_ANCESTORS`, separated by spaces or commas, for example
+`https://portal.example.com https://*.portal.example.com`. Entries are HTTPS origins
+with no path; a leading `*.` allows every subdomain, and plain HTTP is accepted only
+for `localhost`. An invalid entry stops startup. App pages and the dashboard redirect
+that signs a framed page in allow those origins; the rest of the dashboard,
+including its sign-in page, stays unframeable. The embedding site must be on the
+same site as the app domain, because the app's `SameSite=Lax` session cookie only
+reaches a frame from the same site. The first sign-in happens outside the frame:
+open the app once in its own tab, or sign in to the dashboard, then reload the frame.
+
 App code can reach only public addresses. Requests to the dashboard origin go
 straight to the server, so the built-in Executor app works when that origin
 resolves to a private address. Set `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=true` to

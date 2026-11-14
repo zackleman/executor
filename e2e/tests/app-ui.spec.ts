@@ -461,8 +461,22 @@ return { items };`,
         expect(document.status).toBe(302);
         const page = yield* fetchAnonymously(known, "/inbox/read");
         expect(page).toEqual(probe);
-        const navigation = yield* read(known, "/", "text/html");
-        expect(navigation.status).toBe(302);
+        const navigation = yield* send(
+          HttpClientRequest.get(new URL("/", known).href),
+          "text/html",
+        );
+        expect(navigation.outcome.status).toBe(302);
+        // With no frame ancestors configured, no site can frame an app page or its sign-in hop.
+        expect(navigation.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+        if (target.metadata.target === "self-host") {
+          const signIn = yield* send(
+            HttpClientRequest.get(navigation.headers.location ?? ""),
+            "text/html",
+          );
+          expect(new URL(navigation.headers.location ?? "").pathname).toBe("/app-auth");
+          expect(signIn.outcome.status).toBe(302);
+          expect(signIn.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+        }
         // A nonexistent team's hostname is refused too.
         if (target.metadata.target === "cloud" && target.metadata.mode === "attached") {
           // Cloudflare holds one wildcard certificate per team, so a host under an unknown

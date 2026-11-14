@@ -13,7 +13,7 @@ import {
 } from "@executor-js/sdk/core";
 import { AppReturnPath, AppSignInCode, AppSignInId } from "apps/ui/auth/contracts";
 import { UiFailed, UiForbidden, UiUnauthorized } from "apps/ui/contracts";
-import { Context, type Effect, Schema } from "effect";
+import { Context, type Effect, Schema, SchemaTransformation } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import { Principal } from "./auth.ts";
 import {
@@ -52,6 +52,38 @@ export const AppUiBaseUrl = Schema.String.check(
   }),
 ).pipe(Schema.brand("AppUiBaseUrl"));
 export type AppUiBaseUrl = typeof AppUiBaseUrl.Type;
+/**
+ * An outside origin that may show app pages in a frame, written as CSP `frame-ancestors` takes
+ * it. HTTPS, optionally with a leading `*.` for every subdomain of a registered name; plain HTTP
+ * only for localhost development. Paths, keywords and bare schemes are refused, so no entry can
+ * open framing to every site.
+ */
+export const AppUiFrameAncestor = Schema.String.check(
+  Schema.makeFilter((value) => {
+    const origin = value.replace(/^(https?:\/\/)\*\./u, "$1");
+    const url = URL.parse(origin);
+    const local = url?.hostname === "localhost" || url?.hostname.endsWith(".localhost");
+    return url !== null &&
+      url.origin === origin &&
+      /^[a-z0-9.-]+$/u.test(url.hostname) &&
+      (url.protocol === "https:" || (url.protocol === "http:" && local)) &&
+      (origin === value || local || url.hostname.includes("."))
+      ? true
+      : "Each frame ancestor must be an origin such as https://app.example.com or https://*.example.com, with no path. Plain http is allowed only for localhost.";
+  }),
+).pipe(Schema.brand("AppUiFrameAncestor"));
+export type AppUiFrameAncestor = typeof AppUiFrameAncestor.Type;
+/** Origins separated by spaces or commas. An empty list keeps app pages unframeable. */
+export const AppUiFrameAncestors = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Array(AppUiFrameAncestor),
+    SchemaTransformation.transform({
+      decode: (value: string): ReadonlyArray<string> =>
+        value.split(/[\s,]+/u).filter((origin) => origin !== ""),
+      encode: (origins: ReadonlyArray<string>) => origins.join(" "),
+    }),
+  ),
+);
 /** One DNS label; the app and team are separate labels. */
 export const AppUiHostnameLabel = Schema.String.check(
   Schema.isMaxLength(63),

@@ -9485,6 +9485,16 @@ export const scenarios = plan({
       ),
     },
   },
+  appUiFrameAncestors: {
+    file: "app-ui-frame-ancestors.spec.ts",
+    title:
+      "a self-host's named frame ancestors show an app page in their frame and pass its sign-in redirect, while login stays unframeable and an invalid origin stops startup",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Cloud does not read EXECUTOR_APP_UI_FRAME_ANCESTORS; the framing code is shared."),
+      local: na("Local serves app UIs from its own origin and has no frame ancestor setting."),
+    },
+  },
   mcpOAuthPrivateHttpOrigin: {
     file: "mcp-oauth-private-http-origin.spec.ts",
     title:
