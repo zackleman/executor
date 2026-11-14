@@ -148,6 +148,10 @@ layer(TestLive, { excludeTestServices: true })("App UI frame ancestors", (it) =>
           "referrer-policy": "no-referrer",
           "x-content-type-options": "nosniff",
         });
+        // A response that carries no policy of its own gets the list too.
+        const reserved = yield* headers("/_executor/not-found", url);
+        expect(reserved.status).toBe(404);
+        expect(reserved.headers["content-security-policy"]).toBe(`frame-ancestors ${ancestors}`);
         const failedCallback = yield* headers("/_executor/auth/callback", url);
         expect(failedCallback.status).toBe(401);
         expect(failedCallback.headers["content-security-policy"]).toBe(

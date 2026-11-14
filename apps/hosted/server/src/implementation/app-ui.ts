@@ -112,17 +112,18 @@ export const hostedAppUi = <R = never>(
 ) => {
   const domainStatus = options.domainStatus ?? (() => Effect.succeed("ready" as const));
   const ancestors = options.frameAncestors ?? [];
-  // Private responses all send `frame-ancestors 'none'` (`appPrivateHeaders`); only that
-  // directive widens, so every other header and directive stays exactly as it was.
+  // With ancestors, every response names exactly them: `frame-ancestors 'none'` widens to the
+  // list, keeping every other directive and header, and a response without a policy (the app UI
+  // API, a reserved-path 404) gets one, so it is no longer frameable by every site.
   const framed = (response: HttpServerResponse.HttpServerResponse) => {
+    if (ancestors.length === 0) return response;
+    const allowed = `frame-ancestors ${ancestors.join(" ")}`;
     const policy = response.headers["content-security-policy"];
-    return ancestors.length === 0 || policy === undefined
-      ? response
-      : HttpServerResponse.setHeader(
-          response,
-          "content-security-policy",
-          policy.replace("frame-ancestors 'none'", `frame-ancestors ${ancestors.join(" ")}`),
-        );
+    return HttpServerResponse.setHeader(
+      response,
+      "content-security-policy",
+      policy === undefined ? allowed : policy.replace("frame-ancestors 'none'", allowed),
+    );
   };
   const requestOrigin = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
