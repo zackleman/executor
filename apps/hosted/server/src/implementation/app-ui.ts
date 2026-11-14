@@ -52,6 +52,7 @@ import {
   HostedAppSessions,
   HostedAppUiApi,
   type AppUiAddressInvalid,
+  type AppUiFrameAncestor,
   type AppUiTarget,
 } from "../contracts/app-ui.ts";
 import { SessionAuthentication, CurrentUserId, type Principal } from "../contracts/auth.ts";
@@ -97,14 +98,32 @@ const failure = (error: UiUnauthorized | UiForbidden | UiFailed) =>
 /**
  * Build handlers only. The host chooses their route table, origin base, runtime, and Better Auth
  * store. Domain status runs inside the location request and may use that request's services.
+ * `frameAncestors` names outside sites that may show app pages in a frame; with none, every app
+ * response and sign-in hop keeps `frame-ancestors 'none'`.
  */
 export const hostedAppUi = <R = never>(
   addresses: ReturnType<typeof appAddresses>,
-  domainStatus: (
-    team: Pick<AppUiTarget, "slug"> & { readonly id: AppUiTarget["organization"] },
-  ) => Effect.Effect<"ready" | "pending" | "failed", UiFailed | AppUiAddressInvalid, R> = () =>
-    Effect.succeed("ready"),
+  options: {
+    readonly domainStatus?: (
+      team: Pick<AppUiTarget, "slug"> & { readonly id: AppUiTarget["organization"] },
+    ) => Effect.Effect<"ready" | "pending" | "failed", UiFailed | AppUiAddressInvalid, R>;
+    readonly frameAncestors?: ReadonlyArray<AppUiFrameAncestor>;
+  } = {},
 ) => {
+  const domainStatus = options.domainStatus ?? (() => Effect.succeed("ready" as const));
+  const ancestors = options.frameAncestors ?? [];
+  // Private responses all send `frame-ancestors 'none'` (`appPrivateHeaders`); only that
+  // directive widens, so every other header and directive stays exactly as it was.
+  const framed = (response: HttpServerResponse.HttpServerResponse) => {
+    const policy = response.headers["content-security-policy"];
+    return ancestors.length === 0 || policy === undefined
+      ? response
+      : HttpServerResponse.setHeader(
+          response,
+          "content-security-policy",
+          policy.replace("frame-ancestors 'none'", `frame-ancestors ${ancestors.join(" ")}`),
+        );
+  };
   const requestOrigin = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const host = addresses.fromHost(request.headers.host);
@@ -280,6 +299,8 @@ export const hostedAppUi = <R = never>(
   /**
    * The dashboard's `/app-auth` resolves on the server: signed out goes to login, signed in
    * redirects to the app's callback. Only a missing request or a failure renders the page.
+   * A framed app page passes through these redirects while signing in, so they share the app's
+   * frame ancestors; the pages they lead to, login and the failure page, never do.
    */
   const signIn = <E, R>(page: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
     Effect.gen(function* () {
@@ -292,7 +313,7 @@ export const hostedAppUi = <R = never>(
       );
       if (principal === null) {
         const login = new URLSearchParams({ redirect: `/app-auth?request=${attempt.value}` });
-        return appRedirect(`/login?${login}`);
+        return framed(appRedirect(`/login?${login}`));
       }
       return yield* authorizeAttempt(attempt.value, principal).pipe(
         Effect.map(appRedirect),
@@ -301,6 +322,7 @@ export const hostedAppUi = <R = never>(
             appRedirect(`/app-auth?${new URLSearchParams({ failure: signInFailure(error) })}`),
           ),
         ),
+        Effect.map(framed),
       );
     });
   const dashboard = HttpApiBuilder.group(HostedAppUiApi, "appUi", (handlers) =>
@@ -684,12 +706,15 @@ export const hostedAppUi = <R = never>(
     if (path === undefined) return yield* appAsset(undefined, version.build, params["*"]);
     return yield* appAsset(yield* assets(version, path), version.build, path);
   }).pipe(htmlFailure);
+  // Every app-origin route runs inside this middleware, so it is where app responses get the
+  // operator's frame ancestors.
   const originAccess = HttpRouter.middleware((response) =>
     requestOrigin.pipe(
       Effect.matchEffect({
         onFailure: (error) => Effect.succeed(failure(error)),
         onSuccess: () => response,
       }),
+      Effect.map(framed),
     ),
   );
   const sessionAccess = HttpRouter.middleware<{ provides: CurrentAppUi }>()((response) =>

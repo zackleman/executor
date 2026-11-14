@@ -51,6 +51,8 @@ services:
       EXECUTOR_NO_UPDATE_CHECK:
       # Optional HTTPS app origin base. Localhost derives it from BETTER_AUTH_URL.
       EXECUTOR_APP_UI_BASE_URL:
+      # Origins, separated by spaces or commas, that may show app pages in a frame. Unset, none can.
+      EXECUTOR_APP_UI_FRAME_ANCESTORS:
       # Unset passthrough entries stay absent; the default is the bundled collector.
       OTEL_EXPORTER_OTLP_ENDPOINT:
       OTEL_EXPORTER_OTLP_HEADERS:

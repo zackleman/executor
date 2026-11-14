@@ -1,5 +1,5 @@
 /** Self-host storage configuration shared by the database, retained builds and diagnostics. */
-import { AppUiBaseUrl } from "@executor-js/hosted-server/app-ui/contracts";
+import { AppUiBaseUrl, AppUiFrameAncestors } from "@executor-js/hosted-server/app-ui/contracts";
 import { Config, Effect, Option, Schema } from "effect";
 
 /** One persistent root; Docker supplies /app/data and source development uses .local/hosted. */
@@ -18,6 +18,15 @@ export const appUiBaseUrl = (dashboardOrigin: string) =>
     dashboard.hostname = "localhost";
     return yield* Schema.decodeUnknownEffect(AppUiBaseUrl)(dashboard.origin);
   });
+
+/**
+ * Outside sites that may show app pages in a frame, such as a product embedding app screens.
+ * Unset keeps every app page unframeable; an invalid origin stops startup.
+ */
+export const appUiFrameAncestors = Config.schema(
+  AppUiFrameAncestors,
+  "EXECUTOR_APP_UI_FRAME_ANCESTORS",
+).pipe(Config.withDefault([]));
 
 /**
  * App isolates reach only public addresses, the same as Executor Cloud. Requests for the

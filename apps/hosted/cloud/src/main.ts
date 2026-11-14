@@ -370,10 +370,9 @@ export default Api.make(
       // Documentation is a site page, served by the edge when the deployment has role hosts.
       documentation: new URL("/docs/", auth.hosts.site).href,
     });
-    const appUi = hostedAppUi(
-      appAddresses(auth.origin, yield* cloudAppUiBase.pipe(Effect.orDie)),
-      appDomains.status,
-    );
+    const appUi = hostedAppUi(appAddresses(auth.origin, yield* cloudAppUiBase.pipe(Effect.orDie)), {
+      domainStatus: appDomains.status,
+    });
     // Session objects run in the MCP server Worker; this isolate authenticates and forwards.
     const mcp = yield* cloudMcp;
     const meter = yield* BillingMeter.pipe(Effect.provide(billing));
