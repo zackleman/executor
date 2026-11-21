@@ -1,15 +1,15 @@
-# Builds the self-host image from this branch: release 2.0.0-beta.43 plus
+# Builds the self-host image from this branch: release 2.0.0-beta.66 plus
 # EXECUTOR_APP_UI_FRAME_ANCESTORS, until upstream ships the setting.
 name: self-host image
 on:
   push:
-    branches: [selfhost/beta.43-frame-ancestors]
+    branches: [selfhost/beta.66-frame-ancestors]
   workflow_dispatch:
 permissions:
   contents: read
   packages: write
 env:
-  VERSION: 2.0.0-beta.43-frame.1
+  VERSION: 2.0.0-beta.66-frame.1
 jobs:
   image:
     runs-on: ubuntu-latest
