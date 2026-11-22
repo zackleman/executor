@@ -1,5 +1,6 @@
 /** Self-host storage configuration shared by the database, retained builds and diagnostics. */
 import { AppUiBaseUrl, AppUiFrameAncestors } from "@executor-js/hosted-server/app-ui/contracts";
+import { ApprovalMode } from "@executor-js/mcp-auth";
 import { Config, Effect, Option, Schema } from "effect";
 
 /** One persistent root; Docker supplies /app/data and source development uses .local/hosted. */
@@ -27,6 +28,16 @@ export const appUiFrameAncestors = Config.schema(
   AppUiFrameAncestors,
   "EXECUTOR_APP_UI_FRAME_ANCESTORS",
 ).pipe(Config.withDefault([]));
+
+/**
+ * The approval mode a personal access token serves at an MCP URL that names none, such as
+ * `automatic` so agents' own permission prompts decide. Unset keeps `model`. OAuth grants are not
+ * affected: each serves the mode chosen when signing in.
+ */
+export const mcpDefaultApprovalMode = Config.schema(
+  ApprovalMode,
+  "EXECUTOR_MCP_DEFAULT_APPROVAL_MODE",
+).pipe(Config.option);
 
 /**
  * App isolates reach only public addresses, the same as Executor Cloud. Requests for the

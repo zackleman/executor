@@ -350,6 +350,12 @@ same site as the app domain, because the app's `SameSite=Lax` session cookie onl
 reaches a frame from the same site. The first sign-in happens outside the frame:
 open the app once in its own tab, or sign in to the dashboard, then reload the frame.
 
+A personal access token takes its approval mode from the MCP URL, `model` when the
+URL names none. Set `EXECUTOR_MCP_DEFAULT_APPROVAL_MODE` to `automatic`, `native`
+or `browser` to change what the plain URL serves; a URL with `elicitation_mode`
+still serves the mode it names, and an invalid value stops startup. OAuth grants
+are not affected: each keeps the mode chosen when signing in.
+
 App code can reach only public addresses. Requests to the dashboard origin go
 straight to the server, so the built-in Executor app works when that origin
 resolves to a private address. Set `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=true` to

@@ -31,6 +31,7 @@ import {
 import { routeTemplates } from "@executor-js/telemetry";
 import { Context, Effect, Layer, Option, Redacted } from "effect";
 import { SqlClient } from "effect/sql";
+import { mcpDefaultApprovalMode } from "./contracts/config.ts";
 import { AuthDatabase } from "./contracts/database.ts";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
@@ -91,8 +92,10 @@ export const selfHostAuth = Effect.gen(function* () {
     removeUser: (user) =>
       deleteUserRecords(context.adapter, user).pipe(Effect.withSpan("auth.removeUser")),
   });
+  const defaultMode = yield* mcpDefaultApprovalMode;
   const mcpIdentity = Layer.succeed(McpAuthentication, {
     ...origins,
+    ...(Option.isSome(defaultMode) ? { defaultMode: defaultMode.value } : {}),
     authenticate: (headers, mode, organization) =>
       mcpBearerAccess(origins, { headers, mode, organization }).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),

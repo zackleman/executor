@@ -10541,6 +10541,18 @@ export const scenarios = plan({
       local: na("Local serves app UIs from its own origin and has no frame ancestor setting."),
     },
   },
+  mcpDefaultApprovalMode: {
+    file: "mcp-default-approval-mode.spec.ts",
+    title:
+      "a self-host's default approval mode is what a personal access token serves at the plain MCP URL, a URL naming a mode still serves it, and an invalid mode stops startup",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud does not read EXECUTOR_MCP_DEFAULT_APPROVAL_MODE; the address code is shared.",
+      ),
+      local: na("Local has no personal access tokens at an MCP URL."),
+    },
+  },
   mcpOAuthPrivateHttpOrigin: {
     file: "mcp-oauth-private-http-origin.spec.ts",
     title:

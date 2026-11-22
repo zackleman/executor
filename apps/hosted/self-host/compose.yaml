@@ -36,6 +36,8 @@ services:
       # per member (default 256). Past either, the least recently used idle one is forgotten.
       EXECUTOR_MCP_CLIENTS:
       EXECUTOR_MCP_CLIENTS_PER_USER:
+      # Approval mode a personal access token serves at an MCP URL that names none (default model).
+      EXECUTOR_MCP_DEFAULT_APPROVAL_MODE:
       EXECUTOR_OAUTH_CALLBACK_URL:
       # Off by default. <BETTER_AUTH_URL>/oauth/client-metadata.json serves a client metadata
       # document there, which authorization servers must be able to fetch over public HTTPS.

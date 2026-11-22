@@ -503,8 +503,14 @@ export const authenticatedMcp = <E, R>(
         HttpServerResponse.empty({ status: 403 }),
       );
     const url = new URL(request.url, auth.origin);
-    const address = requestedMcpAddress(url);
-    if (address === undefined) return invalidAddress;
+    const requested = requestedMcpAddress(url);
+    if (requested === undefined) return invalidAddress;
+    // The host's default applies only where the URL names no mode, so `?elicitation_mode=model`
+    // still asks the model. The calls this request rechecks reuse this address, and its mode.
+    const address =
+      auth.defaultMode === undefined || url.searchParams.has("elicitation_mode")
+        ? requested
+        : { ...requested, mode: auth.defaultMode };
     // The request's tool calls recheck the same token; they reuse its hash (see BearerHashes).
     const hashes = new Map<string, string>();
     const access = yield* Effect.result(
