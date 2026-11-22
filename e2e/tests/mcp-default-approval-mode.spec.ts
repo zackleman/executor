@@ -25,7 +25,7 @@ layer(TestLive, { excludeTestServices: true })("MCP default approval mode", (it)
         const refused = yield* Effect.scoped(
           startFreshSelfHost(target, { EXECUTOR_MCP_DEFAULT_APPROVAL_MODE: "yolo" }),
         ).pipe(Effect.flip);
-        expect(refused.message).toContain("EXECUTOR_MCP_DEFAULT_APPROVAL_MODE");
+        expect(refused.message).toContain("EXECUTOR_MCP_DEFAULT_APPROVAL_MODE must be one of");
 
         const origin = yield* startFreshSelfHost(target, {
           EXECUTOR_MCP_DEFAULT_APPROVAL_MODE: "automatic",

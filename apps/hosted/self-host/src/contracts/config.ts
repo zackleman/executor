@@ -30,16 +30,6 @@ export const appUiFrameAncestors = Config.schema(
 ).pipe(Config.withDefault([]));
 
 /**
- * The approval mode a personal access token serves at an MCP URL that names none, such as
- * `automatic` so agents' own permission prompts decide. Unset keeps `model`. OAuth grants are not
- * affected: each serves the mode chosen when signing in.
- */
-export const mcpDefaultApprovalMode = Config.schema(
-  ApprovalMode,
-  "EXECUTOR_MCP_DEFAULT_APPROVAL_MODE",
-).pipe(Config.option);
-
-/**
  * App isolates reach only public addresses, the same as Executor Cloud. Requests for the
  * dashboard origin reach the product without the network, so the bundled Executor app does not
  * need this. Operators opt in to let app code reach other private destinations.
@@ -56,6 +46,27 @@ export class SelfHostSettingInvalid extends Schema.TaggedError<SelfHostSettingIn
   "SelfHostSettingInvalid",
   { message: Schema.String },
 ) {}
+
+/**
+ * The approval mode a personal access token serves at an MCP URL that names none, such as
+ * `automatic` so agents' own permission prompts decide. Unset keeps `model`. OAuth grants are not
+ * affected: each serves the mode chosen when signing in. Any other value stops startup.
+ */
+export const mcpDefaultApprovalMode = Effect.flatMap(
+  Config.String("EXECUTOR_MCP_DEFAULT_APPROVAL_MODE").pipe(Config.option),
+  (value) =>
+    Option.isNone(value)
+      ? Effect.succeedNone
+      : Schema.decodeUnknownEffect(ApprovalMode)(value.value).pipe(
+          Effect.map(Option.some),
+          Effect.mapError(
+            () =>
+              new SelfHostSettingInvalid({
+                message: `EXECUTOR_MCP_DEFAULT_APPROVAL_MODE must be one of ${ApprovalMode.literals.join(", ")}.`,
+              }),
+          ),
+        ),
+);
 
 /** A whole number of at least 1, when set; otherwise `fallback`. */
 const clientCount = (name: string, fallback: number) =>
