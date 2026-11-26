@@ -35,23 +35,12 @@ const Parent = Schema.Struct({
   expiresAt: Schema.Date,
   impersonatedBy: Schema.optional(Schema.NullOr(Principal.fields.userId)),
 });
-/** The api-key plugin's row; `enabled` and `expiresAt` are as its own verification reads them. */
+/** The api-key plugin's row, with the fields the bearer check reads to accept a key. */
 const Key = Schema.Struct({
   referenceId: Schema.String,
   enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  remaining: Schema.optional(Schema.NullOr(Schema.Number)),
   expiresAt: Schema.optional(Schema.NullOr(Schema.Date)),
-});
-/** An OAuth grant, or the connection a connection grant reads its authority from. */
-const Grant = Schema.Struct({
-  userId: Schema.String,
-  resource: Schema.String,
-  revoked: Schema.Boolean,
-  connection: Schema.optional(Schema.NullOr(Schema.String)),
-});
-const Connection = Schema.Struct({
-  userId: Schema.String,
-  resource: Schema.String,
-  revoked: Schema.Boolean,
 });
 const Organization = Schema.Struct({ id: OrganizationId, slug: OrganizationSlug });
 const Membership = Schema.Struct({ role: OrganizationRole });
@@ -145,63 +134,35 @@ export const hostedAppSessions = (
         return yield* refuse("expired", new UiUnauthorized());
       return session;
     });
-  /** A row by ID with the fields `schema` names; a missing row is a revoked credential. */
-  const found = <S extends Schema.Struct<Schema.Struct.Fields>>(
-    model: string,
-    id: string,
-    schema: S,
-  ) =>
+  /**
+   * The API key that launched an app session, as the bearer check would find it now: still there,
+   * enabled, unexpired and held by the same user.
+   */
+  const apiKey = (id: string, user: typeof Principal.Type.userId) =>
     Effect.gen(function* () {
       const row = yield* query(() =>
         context.adapter.findOne({
-          model,
+          model: "apikey",
           where: [{ field: "id", value: id }],
-          select: Object.keys(schema.fields),
+          select: Object.keys(Key.fields),
         }),
       );
       if (row === null) return yield* refuse("revoked", new UiUnauthorized());
-      return yield* Schema.decodeUnknownEffect(schema)(row).pipe(Effect.mapError(unavailable));
-    });
-  /**
-   * The key or grant that launched an app session, as the bearer check would find it now: still
-   * there, not disabled, revoked or expired, held by the same user in the same organization. A
-   * connection grant lives only while its connection does.
-   */
-  const bearer = (
-    parent: Exclude<AppUiParent, string>,
-    user: typeof Principal.Type.userId,
-    organization: AppUiTarget["organization"],
-  ) =>
-    Effect.gen(function* () {
-      if (parent.kind === "apiKey") {
-        const apiKey = yield* found("apikey", parent.id, Key);
-        if (apiKey.referenceId !== user)
-          return yield* refuse("wrong_resource", new UiUnauthorized());
-        if (apiKey.enabled === false) return yield* refuse("revoked", new UiUnauthorized());
-        const expiresAt = apiKey.expiresAt ?? undefined;
-        if (expiresAt !== undefined && expiresAt.getTime() <= (yield* Clock.currentTimeMillis))
-          return yield* refuse("expired", new UiUnauthorized());
-        return { expiresAt };
-      }
-      const held = (record: typeof Connection.Type) =>
-        record.revoked
-          ? refuse("revoked", new UiUnauthorized())
-          : record.userId !== user || record.resource !== organization
-            ? refuse("wrong_resource", new UiUnauthorized())
-            : Effect.void;
-      const grant = yield* found("mcpGrant", parent.id, Grant);
-      yield* held(grant);
-      if (typeof grant.connection === "string")
-        yield* held(yield* found("mcpConnection", grant.connection, Connection));
-      return { expiresAt: undefined };
+      const key = yield* Schema.decodeUnknownEffect(Key)(row).pipe(Effect.mapError(unavailable));
+      if (key.referenceId !== user) return yield* refuse("wrong_resource", new UiUnauthorized());
+      // A key with a use budget is never accepted as a bearer, so it never keeps a page open.
+      if (key.enabled === false || (key.remaining ?? null) !== null)
+        return yield* refuse("revoked", new UiUnauthorized());
+      const expiresAt = key.expiresAt ?? undefined;
+      if (expiresAt !== undefined && expiresAt.getTime() <= (yield* Clock.currentTimeMillis))
+        return yield* refuse("expired", new UiUnauthorized());
+      return expiresAt;
     });
   /** The parent login is live; an app session must end no later than it does. */
-  const login = (parent: AppUiParent, user: typeof Principal.Type.userId, target: AppUiTarget) =>
+  const login = (parent: AppUiParent, user: typeof Principal.Type.userId) =>
     Effect.gen(function* () {
-      if (typeof parent !== "string") {
-        const live = yield* bearer(parent, user, target.organization);
-        return { expiresAt: live.expiresAt, impersonatedBy: undefined };
-      }
+      if (typeof parent !== "string")
+        return { expiresAt: yield* apiKey(parent.id, user), impersonatedBy: undefined };
       const live = yield* session(parent, user);
       return { expiresAt: live.expiresAt, impersonatedBy: live.impersonatedBy };
     });
@@ -359,7 +320,7 @@ export const hostedAppSessions = (
         if (!Schema.is(AppUiLaunch)(launch) || !sameTarget(launch.target, target))
           return yield* refuse("wrong_resource", new UiUnauthorized());
         const [parent] = yield* inOrder(
-          login(launch.parent, launch.user, target),
+          login(launch.parent, launch.user),
           membership(launch.user, target),
         );
         return yield* open(target, launch.parent, launch.user, parent.expiresAt);
@@ -369,7 +330,7 @@ export const hostedAppSessions = (
         const session = yield* read(key("session", yield* digest(token)));
         if (!Schema.is(AppUiSession)(session) || !sameTarget(session.target, target))
           return yield* refuse("wrong_resource", new UiUnauthorized());
-        const parent = yield* login(session.parent, session.user, target);
+        const parent = yield* login(session.parent, session.user);
         // The serving host checks current membership together with app/account
         // permissions. A second lookup here adds no authority to that decision.
         return typeof parent.impersonatedBy === "string"

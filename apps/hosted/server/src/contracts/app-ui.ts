@@ -15,7 +15,7 @@ import { AppReturnPath, AppSignInCode, AppSignInId } from "apps/ui/auth/contract
 import { UiFailed, UiForbidden, UiUnauthorized } from "apps/ui/contracts";
 import { Context, type Effect, Schema, SchemaTransformation } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
-import { BearerCredential, Principal } from "./auth.ts";
+import { Principal } from "./auth.ts";
 import { RequiredAction } from "./authorization.ts";
 import {
   OrganizationForbidden,
@@ -133,9 +133,13 @@ export const AppUiAttempt = Schema.Struct({
 });
 /**
  * The login an app session lives under, checked on every use: the dashboard session that signed
- * in, stored as its bare ID, or the API key or OAuth grant that launched the page.
+ * in, stored as its bare ID, or the API key that launched the page. An OAuth grant launches none:
+ * its authority can narrow and its tokens lapse without a row an app request could recheck.
  */
-export const AppUiParent = Schema.Union([Principal.fields.sessionId, BearerCredential]);
+export const AppUiParent = Schema.Union([
+  Principal.fields.sessionId,
+  Schema.Struct({ kind: Schema.Literal("apiKey"), id: Schema.String }),
+]);
 export type AppUiParent = typeof AppUiParent.Type;
 /** A short-lived authorization code refers to the parent login, never its bearer token. */
 export const AppUiGrant = Schema.Struct({
@@ -279,7 +283,7 @@ export const HostedAppUi = HttpApiGroup.make("appUi")
     })
       .annotate(
         OpenApi.Description,
-        "Get a one-time link that opens the private app page signed in as the caller, for a browser with no Executor session, such as an embedded web view. The link works once, within 60 seconds; the page's session then lasts as long as one from signing in, and ends when the credential that made this call is revoked. Answers as location does when the app has no page address. Treat the link as a password: never log or share it.",
+        "Get a one-time link that opens the private app page signed in as the caller, for a browser with no Executor session, such as an embedded web view. The link works once, within 60 seconds; the page's session then lasts as long as one from signing in, and ends when the credential that made this call is revoked. Needs a browser session or an API key; an OAuth token is refused. Answers as location does when the app has no page address. Treat the link as a password: never log or share it.",
       )
       .annotate(RequiredAction, "data")
       .middleware(RequireOrganization),

@@ -36,8 +36,8 @@ const impersonationColumn = {
 } satisfies BetterAuthPlugin;
 
 /**
- * The columns that end a launched app session with the API key or OAuth grant that launched it.
- * The api-key and grant plugins own these tables; their endpoints are not loaded here.
+ * The columns that end a launched app session with the API key that launched it. The api-key
+ * plugin owns this table; its endpoints are not loaded here.
  */
 const launchCredentialTables = {
   id: "app-launch-credentials",
@@ -46,22 +46,8 @@ const launchCredentialTables = {
       fields: {
         referenceId: { type: "string" },
         enabled: { type: "boolean", required: false },
+        remaining: { type: "number", required: false },
         expiresAt: { type: "date", required: false },
-      },
-    },
-    mcpGrant: {
-      fields: {
-        userId: { type: "string" },
-        resource: { type: "string" },
-        revoked: { type: "boolean" },
-        connection: { type: "string", required: false },
-      },
-    },
-    mcpConnection: {
-      fields: {
-        userId: { type: "string" },
-        resource: { type: "string" },
-        revoked: { type: "boolean" },
       },
     },
   },
@@ -69,7 +55,7 @@ const launchCredentialTables = {
 
 /**
  * App pages only keep verification records and read sessions, members, organizations and the
- * credentials a launched page lives under. The dashboard's full Better Auth instance writes the same rows:
+ * API keys a launched page lives under. The dashboard's full Better Auth instance writes the same rows:
  * neither configures verification storage, secondary storage, ID generation or
  * verification hooks, so both adapters read and consume them identically.
  */

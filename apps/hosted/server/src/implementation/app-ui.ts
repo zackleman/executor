@@ -392,7 +392,10 @@ export const hostedAppUi = <R = never>(
           if (target === undefined) return location;
           const credential = yield* CurrentCredential;
           const user = yield* CurrentUserId;
-          if (credential === undefined || user === undefined)
+          // An OAuth grant's authority can narrow and its tokens lapse after the page opens, so
+          // only a browser session or an API key, which the page rechecks on every request, may
+          // launch one.
+          if (credential === undefined || credential.kind === "grant" || user === undefined)
             return yield* new OrganizationForbidden();
           const sessions = yield* HostedAppSessions;
           const code = yield* sessions
@@ -401,7 +404,7 @@ export const hostedAppUi = <R = never>(
               Principal.fields.userId.make(user),
               // A browser session is stored as its bare ID, as an app session signed in from the
               // dashboard names it.
-              credential.kind === "session" ? credential.id : credential,
+              credential.kind === "session" ? credential.id : { kind: "apiKey", id: credential.id },
             )
             .pipe(Effect.mapError(() => new AppUiUnavailable()));
           const url = new URL(appLaunchPath, target.origin);
@@ -742,14 +745,38 @@ export const hostedAppUi = <R = never>(
     Effect.catchTag("UiUnauthorized", () => Effect.succeed(appSignInFailed())),
     htmlFailure,
   );
-  /** Redeem a launch link: the code alone opens an app session, then the app's first page. */
+  /**
+   * Redeem a launch link: the code alone opens an app session, then the app's first page. A HEAD
+   * or a prefetch, such as a link preview, leaves the code unspent. A browser already signed in to
+   * this app keeps its own session, so a link someone else sends cannot swap whose page it shows.
+   */
   const launch = Effect.gen(function* () {
     const resolved = yield* target;
+    const { request } = resolved;
+    if (
+      request.method !== "GET" ||
+      request.headers["sec-purpose"]?.includes("prefetch") ||
+      request.headers.purpose === "prefetch"
+    )
+      return HttpServerResponse.empty({ status: 405, headers: appPrivateHeaders });
     const code = Schema.decodeUnknownOption(AppSignInCode)(
-      new URL(resolved.request.url, resolved.target.origin).searchParams.get("code"),
+      new URL(request.url, resolved.target.origin).searchParams.get("code"),
     );
     if (Option.isNone(code)) return yield* refuse("missing", new UiUnauthorized());
     const sessions = yield* HostedAppSessions;
+    const current = Schema.decodeUnknownOption(AppSignInCode)(
+      request.cookies[sessionCookie(resolved.target.origin)],
+    );
+    const signedIn =
+      Option.isSome(current) &&
+      (yield* sessions.current(resolved.target, current.value).pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          UiUnauthorized: () => Effect.succeed(false),
+          UiForbidden: () => Effect.succeed(false),
+        }),
+      ));
+    if (signedIn) return appRedirect("/");
     const opened = yield* sessions.redeem(resolved.target, code.value);
     return yield* appRedirect("/").pipe(
       HttpServerResponse.setCookie(
