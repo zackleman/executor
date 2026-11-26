@@ -1,7 +1,7 @@
 /**
  * A one-time launch link opens a private app page in a browser with no Executor session: the
  * link works once, for one app, within a minute, only for a caller who may open the app, and its
- * session ends with the credential that asked for it. A preview never spends it, a browser already
+ * session ends with the credential that asked for it. A preview or a subresource request never spends it, a browser already
  * signed in keeps its own session, and an OAuth token gets no link.
  */
 import { expect, layer } from "@effect/vitest";
@@ -106,12 +106,19 @@ layer(HostedLive, { excludeTestServices: true })("App launch links", (it) => {
         const notes = yield* deployPage("Launched notes");
         const other = yield* deployPage("Other app");
 
-        // An agent asks for the link through MCP code mode, with the owner's API key.
+        // An agent connected through OAuth asks for the link in MCP code mode; the Executor app
+        // makes the call with its own managed API key. The browser then forgets its sign-in.
         yield* managementApp(actors.owner);
-        const key = yield* ownerKey("Launch link agent");
-        const client = yield* mcp.connect(key.key, "app-launch", {
-          organization: actors.organization.id,
-        });
+        yield* browser.login(actors.owner);
+        const agent = yield* oauth.authorize;
+        yield* browser.use("Sign the browser out of Executor", (page) =>
+          page.context().clearCookies(),
+        );
+        const client = yield* mcp.connect(
+          Redacted.make(Redacted.value(agent.tokens).access_token),
+          "app-launch",
+          { organization: actors.organization.id },
+        );
         const executed = yield* client.use("Get a launch link through MCP", (client, signal) =>
           client.callTool(
             {
@@ -140,6 +147,10 @@ layer(HostedLive, { excludeTestServices: true })("App launch links", (it) => {
         // A link preview's HEAD or prefetch is refused and leaves the link unspent.
         expect(yield* get(link.url, {}, "HEAD")).toMatchObject({ status: 405, cookie: undefined });
         expect(yield* get(link.url, { "sec-purpose": "prefetch" })).toMatchObject({
+          status: 405,
+          cookie: undefined,
+        });
+        expect(yield* get(link.url, { "sec-fetch-dest": "image" })).toMatchObject({
           status: 405,
           cookie: undefined,
         });

@@ -746,8 +746,9 @@ export const hostedAppUi = <R = never>(
     htmlFailure,
   );
   /**
-   * Redeem a launch link: the code alone opens an app session, then the app's first page. A HEAD
-   * or a prefetch, such as a link preview, leaves the code unspent. A browser already signed in to
+   * Redeem a launch link: the code alone opens an app session, then the app's first page. A HEAD,
+   * a prefetch, such as a link preview, or a browser's subresource or frame request leaves the code
+   * unspent; a client that sends no fetch metadata is let through. A browser already signed in to
    * this app keeps its own session, so a link someone else sends cannot swap whose page it shows.
    */
   const launch = Effect.gen(function* () {
@@ -755,6 +756,7 @@ export const hostedAppUi = <R = never>(
     const { request } = resolved;
     if (
       request.method !== "GET" ||
+      (request.headers["sec-fetch-dest"] ?? "document") !== "document" ||
       request.headers["sec-purpose"]?.includes("prefetch") ||
       request.headers.purpose === "prefetch"
     )
@@ -764,12 +766,10 @@ export const hostedAppUi = <R = never>(
     );
     if (Option.isNone(code)) return yield* refuse("missing", new UiUnauthorized());
     const sessions = yield* HostedAppSessions;
-    const current = Schema.decodeUnknownOption(AppSignInCode)(
-      request.cookies[sessionCookie(resolved.target.origin)],
-    );
+    // Signed in means a session that may still open this app, as the page itself would check.
     const signedIn =
-      Option.isSome(current) &&
-      (yield* sessions.current(resolved.target, current.value).pipe(
+      Object.hasOwn(request.cookies, sessionCookie(resolved.target.origin)) &&
+      (yield* authorizeTarget(resolved).pipe(
         Effect.as(true),
         Effect.catchTags({
           UiUnauthorized: () => Effect.succeed(false),
