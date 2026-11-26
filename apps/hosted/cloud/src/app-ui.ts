@@ -1,7 +1,7 @@
 import { recordUnclassifiedRefusals, requestServices } from "@executor-js/hosted-server";
 import { previewLifetime } from "./infrastructure/test-stage-expiry.ts";
 /** Private app-origin entry point. Dashboard assets and management APIs are never mounted here. */
-import { hostedAppUi, appAddresses } from "@executor-js/hosted-server/app-ui";
+import { hostedAppUi, appAddresses, appLaunchPath } from "@executor-js/hosted-server/app-ui";
 import { appPrivateHeaders, appSignInCallbackPath } from "apps/ui/auth";
 import { AppUiApi } from "apps/ui/contracts";
 import { AlchemyContext } from "alchemy/AlchemyContext";
@@ -86,6 +86,7 @@ export default class AppPages extends Cloudflare.Worker<AppPages>()(
     const notFound = HttpServerResponse.empty({ status: 404 });
     const protectedRoutes = Layer.mergeAll(
       HttpRouter.add("GET", appSignInCallbackPath, appUi.callback),
+      HttpRouter.add("GET", appLaunchPath, appUi.launch),
       HttpRouter.add("GET", "/_executor/assets/:version/*", appUi.asset),
       HttpRouter.add("GET", "/_executor/version", appUi.versions),
       HttpRouter.add("POST", "/_executor/api/telemetry/traces", appUi.telemetry("traces")),

@@ -36,8 +36,40 @@ const impersonationColumn = {
 } satisfies BetterAuthPlugin;
 
 /**
- * App pages only keep verification records and read sessions, members and
- * organizations. The dashboard's full Better Auth instance writes the same rows:
+ * The columns that end a launched app session with the API key or OAuth grant that launched it.
+ * The api-key and grant plugins own these tables; their endpoints are not loaded here.
+ */
+const launchCredentialTables = {
+  id: "app-launch-credentials",
+  schema: {
+    apikey: {
+      fields: {
+        referenceId: { type: "string" },
+        enabled: { type: "boolean", required: false },
+        expiresAt: { type: "date", required: false },
+      },
+    },
+    mcpGrant: {
+      fields: {
+        userId: { type: "string" },
+        resource: { type: "string" },
+        revoked: { type: "boolean" },
+        connection: { type: "string", required: false },
+      },
+    },
+    mcpConnection: {
+      fields: {
+        userId: { type: "string" },
+        resource: { type: "string" },
+        revoked: { type: "boolean" },
+      },
+    },
+  },
+} satisfies BetterAuthPlugin;
+
+/**
+ * App pages only keep verification records and read sessions, members, organizations and the
+ * credentials a launched page lives under. The dashboard's full Better Auth instance writes the same rows:
  * neither configures verification storage, secondary storage, ID generation or
  * verification hooks, so both adapters read and consume them identically.
  */
@@ -45,7 +77,7 @@ export const cloudAppSessions = Effect.gen(function* () {
   const database = yield* AuthDatabase;
   const options = {
     database: database.options,
-    plugins: [organizationTables, impersonationColumn],
+    plugins: [organizationTables, impersonationColumn, launchCredentialTables],
     // The dashboard cleans expired records during sign-in. App reads check expiry themselves.
     verification: { disableCleanup: true },
     // As in the dashboard: the deployment migration validates the schema, not requests.

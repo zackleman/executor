@@ -51,11 +51,17 @@ import {
   HostedAppRuntime,
   HostedAppSessions,
   HostedAppUiApi,
+  appLaunchPath,
   type AppUiAddressInvalid,
   type AppUiFrameAncestor,
   type AppUiTarget,
 } from "../contracts/app-ui.ts";
-import { SessionAuthentication, CurrentUserId, type Principal } from "../contracts/auth.ts";
+import {
+  CurrentCredential,
+  CurrentUserId,
+  Principal,
+  SessionAuthentication,
+} from "../contracts/auth.ts";
 import { HostedExecutor } from "../contracts/executor.ts";
 import {
   CurrentOrganization,
@@ -326,42 +332,83 @@ export const hostedAppUi = <R = never>(
         Effect.map(framed),
       );
     });
-  const dashboard = HttpApiBuilder.group(HostedAppUiApi, "appUi", (handlers) =>
-    handlers.handle("location", ({ params }) =>
-      Effect.gen(function* () {
-        const access = yield* CurrentOrganization;
-        // Missing and inaccessible apps fail alike, before the app is read.
-        yield* requireAppAccess(params.app, "use");
-        const executor = yield* Effect.flatten(HostedExecutor);
-        const app = yield* executor.apps.get({ owner: access.owner, app: params.app });
-        if (app.activeVersion === null) return yield* new AppNotDeployed({ app: app.id });
-        const version = yield* executor.apps.version({
-          owner: app.owner,
+  /**
+   * The app's page address, after the checks every opening of the app makes, and the target a
+   * launch link signs in to when the page is ready.
+   */
+  const locate = (requested: App["id"]) =>
+    Effect.gen(function* () {
+      const access = yield* CurrentOrganization;
+      // Missing and inaccessible apps fail alike, before the app is read.
+      yield* requireAppAccess(requested, "use");
+      const executor = yield* Effect.flatten(HostedExecutor);
+      const app = yield* executor.apps.get({ owner: access.owner, app: requested });
+      if (app.activeVersion === null) return yield* new AppNotDeployed({ app: app.id });
+      const version = yield* executor.apps.version({
+        owner: app.owner,
+        app: app.id,
+        version: app.activeVersion,
+        versionOwner: app.owner,
+      });
+      // The build, organization and domain reads below fail only when their records are unavailable.
+      const page = yield* assets(version, "index.html").pipe(
+        Effect.mapError(() => new AppUiUnavailable()),
+      );
+      const unavailablePage = (reason: "no_ui" | "no_app_domain") => ({
+        location: { status: "unavailable" as const, url: null, reason },
+        target: undefined,
+      });
+      if (page === undefined) return unavailablePage("no_ui");
+      if (!addresses.enabled) return unavailablePage("no_app_domain");
+      const sessions = yield* HostedAppSessions;
+      const organization = yield* sessions
+        .organization({ id: access.organization })
+        .pipe(Effect.mapError(() => new AppUiUnavailable()));
+      const url = yield* addresses
+        .origin(app, organization.slug)
+        .pipe(Effect.catchTag("UiFailed", () => Effect.fail(new AppUiUnavailable())));
+      const status = yield* domainStatus(organization).pipe(
+        Effect.catchTag("UiFailed", () => Effect.fail(new AppUiUnavailable())),
+      );
+      if (status !== "ready") return { location: { status, url: null }, target: undefined };
+      return {
+        location: { status, url },
+        target: {
           app: app.id,
-          version: app.activeVersion,
-          versionOwner: app.owner,
-        });
-        // The build, organization and domain reads below fail only when their records are unavailable.
-        const page = yield* assets(version, "index.html").pipe(
-          Effect.mapError(() => new AppUiUnavailable()),
-        );
-        if (page === undefined)
-          return { status: "unavailable" as const, url: null, reason: "no_ui" as const };
-        if (!addresses.enabled)
-          return { status: "unavailable" as const, url: null, reason: "no_app_domain" as const };
-        const sessions = yield* HostedAppSessions;
-        const organization = yield* sessions
-          .organization({ id: access.organization })
-          .pipe(Effect.mapError(() => new AppUiUnavailable()));
-        const url = yield* addresses
-          .origin(app, organization.slug)
-          .pipe(Effect.catchTag("UiFailed", () => Effect.fail(new AppUiUnavailable())));
-        const status = yield* domainStatus(organization).pipe(
-          Effect.catchTag("UiFailed", () => Effect.fail(new AppUiUnavailable())),
-        );
-        return status === "ready" ? { status, url } : { status, url: null };
-      }),
-    ),
+          organization: organization.id,
+          slug: organization.slug,
+          origin: url,
+        },
+      };
+    });
+  const dashboard = HttpApiBuilder.group(HostedAppUiApi, "appUi", (handlers) =>
+    handlers
+      .handle("location", ({ params }) =>
+        Effect.map(locate(params.app), ({ location }) => location),
+      )
+      .handle("launch", ({ params }) =>
+        Effect.gen(function* () {
+          const { location, target } = yield* locate(params.app);
+          if (target === undefined) return location;
+          const credential = yield* CurrentCredential;
+          const user = yield* CurrentUserId;
+          if (credential === undefined || user === undefined)
+            return yield* new OrganizationForbidden();
+          const sessions = yield* HostedAppSessions;
+          const code = yield* sessions
+            .launch(
+              target,
+              Principal.fields.userId.make(user),
+              // A browser session is stored as its bare ID, as an app session signed in from the
+              // dashboard names it.
+              credential.kind === "session" ? credential.id : credential,
+            )
+            .pipe(Effect.mapError(() => new AppUiUnavailable()));
+          const url = new URL(appLaunchPath, target.origin);
+          url.searchParams.set("code", Redacted.value(code));
+          return { status: "ready" as const, url: url.href };
+        }),
+      ),
   ).pipe(Layer.provide(requestRejections));
   const dataFailure = (error: unknown) =>
     Schema.is(OrganizationForbidden)(error)
@@ -695,6 +742,30 @@ export const hostedAppUi = <R = never>(
     Effect.catchTag("UiUnauthorized", () => Effect.succeed(appSignInFailed())),
     htmlFailure,
   );
+  /** Redeem a launch link: the code alone opens an app session, then the app's first page. */
+  const launch = Effect.gen(function* () {
+    const resolved = yield* target;
+    const code = Schema.decodeUnknownOption(AppSignInCode)(
+      new URL(resolved.request.url, resolved.target.origin).searchParams.get("code"),
+    );
+    if (Option.isNone(code)) return yield* refuse("missing", new UiUnauthorized());
+    const sessions = yield* HostedAppSessions;
+    const opened = yield* sessions.redeem(resolved.target, code.value);
+    return yield* appRedirect("/").pipe(
+      HttpServerResponse.setCookie(
+        sessionCookie(resolved.target.origin),
+        Redacted.value(opened.token),
+        {
+          ...cookieOptions(resolved.target.origin),
+          maxAge: Math.max(0, opened.expiresAt.getTime() - (yield* Clock.currentTimeMillis)),
+        },
+      ),
+      Effect.orDie,
+    );
+  }).pipe(
+    Effect.catchTag("UiUnauthorized", () => Effect.succeed(appSignInFailed())),
+    htmlFailure,
+  );
   const asset = Effect.gen(function* () {
     // The app's build chose its assets' file names.
     yield* recordRoute("/_executor/assets/:version/:asset");
@@ -734,6 +805,7 @@ export const hostedAppUi = <R = never>(
   return {
     signIn,
     callback,
+    launch,
     dashboard,
     calls,
     page,

@@ -15,7 +15,8 @@ import { AppReturnPath, AppSignInCode, AppSignInId } from "apps/ui/auth/contract
 import { UiFailed, UiForbidden, UiUnauthorized } from "apps/ui/contracts";
 import { Context, type Effect, Schema, SchemaTransformation } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
-import { Principal } from "./auth.ts";
+import { BearerCredential, Principal } from "./auth.ts";
+import { RequiredAction } from "./authorization.ts";
 import {
   OrganizationForbidden,
   OrganizationId,
@@ -130,6 +131,12 @@ export const AppUiAttempt = Schema.Struct({
   returnTo: AppReturnPath,
   proof: Schema.String,
 });
+/**
+ * The login an app session lives under, checked on every use: the dashboard session that signed
+ * in, stored as its bare ID, or the API key or OAuth grant that launched the page.
+ */
+export const AppUiParent = Schema.Union([Principal.fields.sessionId, BearerCredential]);
+export type AppUiParent = typeof AppUiParent.Type;
 /** A short-lived authorization code refers to the parent login, never its bearer token. */
 export const AppUiGrant = Schema.Struct({
   kind: Schema.Literal("grant"),
@@ -138,15 +145,27 @@ export const AppUiGrant = Schema.Struct({
   parent: Principal.fields.sessionId,
   user: Principal.fields.userId,
 });
+/**
+ * A one-time link that opens one app as its caller, in a browser with no Executor session. Kept
+ * under the digest of its code, which is the only proof: whoever opens the link first is signed in.
+ */
+export const AppUiLaunch = Schema.Struct({
+  kind: Schema.Literal("launch"),
+  target: AppUiTarget,
+  parent: AppUiParent,
+  user: Principal.fields.userId,
+});
 /** App sessions retain only scoped authority; every use checks current login and membership. */
 export const AppUiSession = Schema.Struct({
   kind: Schema.Literal("session"),
   target: AppUiTarget,
-  parent: Principal.fields.sessionId,
+  parent: AppUiParent,
   user: Principal.fields.userId,
 });
 /** Versioned records live in Better Auth's existing expiring verification store. */
-export const AppUiRecord = Schema.Union([AppUiAttempt, AppUiGrant, AppUiSession]);
+export const AppUiRecord = Schema.Union([AppUiAttempt, AppUiGrant, AppUiLaunch, AppUiSession]);
+/** Host-owned path on every app origin that redeems a launch link. */
+export const appLaunchPath = "/_executor/auth/launch";
 
 /** Product authentication operations backed by the host's Better Auth instance. */
 export class HostedAppSessions extends Context.Service<
@@ -182,6 +201,20 @@ export class HostedAppSessions extends Context.Service<
       target: AppUiTarget,
       principal: Principal,
     ) => Effect.Effect<typeof AppSignInCode.Type, UiFailed>;
+    /** Issue a one-minute launch code after the caller has checked the credential's access. */
+    readonly launch: (
+      target: AppUiTarget,
+      user: Principal["userId"],
+      parent: AppUiParent,
+    ) => Effect.Effect<typeof AppSignInCode.Type, UiFailed>;
+    /** Consume a launch code for this app and open an app session under the launch's parent. */
+    readonly redeem: (
+      target: AppUiTarget,
+      code: typeof AppSignInCode.Type,
+    ) => Effect.Effect<
+      { readonly token: typeof AppSignInCode.Type; readonly expiresAt: Date },
+      UiUnauthorized | UiForbidden | UiFailed
+    >;
     readonly complete: (
       target: AppUiTarget,
       request: AppSignInId,
@@ -214,27 +247,43 @@ export class HostedAppRuntime extends Context.Service<HostedAppRuntime, Pick<Run
   "hosted/AppRuntime",
 ) {}
 
+const locationErrors = [
+  OrganizationForbidden,
+  StorageError,
+  AppNotFound,
+  AppNotDeployed,
+  VersionNotFound,
+  AppUiAddressInvalid,
+  AppUiUnavailable,
+];
 /** URL discovery uses organization grants; browser authorization still requires a user session. */
-export const HostedAppUi = HttpApiGroup.make("appUi").add(
-  HttpApiEndpoint.get("location", "/api/organizations/:organization/apps/:app/ui", {
-    params: { organization: OrganizationReference, app: AppId },
-    success: AppUiLocation,
-    error: [
-      OrganizationForbidden,
-      StorageError,
-      AppNotFound,
-      AppNotDeployed,
-      VersionNotFound,
-      AppUiAddressInvalid,
-      AppUiUnavailable,
-    ],
-  })
-    .annotate(
-      OpenApi.Description,
-      "Get the canonical private app URL. Fails with AppNotDeployed until the app's first deploy. Returns null when the deployed app has no UI or the host has no app domain. Open the returned URL in a browser to sign in; no separate publish step is needed.",
-    )
-    .middleware(RequireOrganization),
-);
+export const HostedAppUi = HttpApiGroup.make("appUi")
+  .add(
+    HttpApiEndpoint.get("location", "/api/organizations/:organization/apps/:app/ui", {
+      params: { organization: OrganizationReference, app: AppId },
+      success: AppUiLocation,
+      error: locationErrors,
+    })
+      .annotate(
+        OpenApi.Description,
+        "Get the canonical private app URL. Fails with AppNotDeployed until the app's first deploy. Returns null when the deployed app has no UI or the host has no app domain. Open the returned URL in a browser to sign in; no separate publish step is needed.",
+      )
+      .middleware(RequireOrganization),
+  )
+  .add(
+    // A page's calls are app data operations, so a token must hold `data` to open one.
+    HttpApiEndpoint.post("launch", "/api/organizations/:organization/apps/:app/ui/launch", {
+      params: { organization: OrganizationReference, app: AppId },
+      success: AppUiLocation,
+      error: locationErrors,
+    })
+      .annotate(
+        OpenApi.Description,
+        "Get a one-time link that opens the private app page signed in as the caller, for a browser with no Executor session, such as an embedded web view. The link works once, within 60 seconds; the page's session then lasts as long as one from signing in, and ends when the credential that made this call is revoked. Answers as location does when the app has no page address. Treat the link as a password: never log or share it.",
+      )
+      .annotate(RequiredAction, "data")
+      .middleware(RequireOrganization),
+  );
 /** A browser client can consume the same narrow contract without importing a host's full API. */
 export const HostedAppUiApi = HttpApi.make("executor-hosted")
   .add(HostedAppUi)
