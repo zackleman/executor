@@ -38,7 +38,7 @@ import {
   ProductAnalytics,
 } from "@executor-js/hosted-server";
 import { recordRequestRejections, requestTiming } from "@executor-js/telemetry/http";
-import { appAddresses, hostedAppUi } from "@executor-js/hosted-server/app-ui";
+import { appAddresses, appLaunchPath, hostedAppUi } from "@executor-js/hosted-server/app-ui";
 import { appSignInCallbackPath } from "apps/ui/auth";
 import { AppUiApi } from "apps/ui/contracts";
 import { HttpApiBuilder } from "effect/http-api";
@@ -214,6 +214,7 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
         Layer.provide(appUi.sessionAccess.combine(appServices).layer),
       ),
       HttpRouter.add("GET", appSignInCallbackPath, appUi.callback),
+      HttpRouter.add("GET", appLaunchPath, appUi.launch),
       HttpRouter.add("GET", "/_executor/assets/:version/*", appUi.asset),
       HttpRouter.add("GET", "/_executor/version", appUi.versions),
       HttpRouter.add("POST", "/_executor/api/telemetry/traces", appUi.telemetry("traces")),

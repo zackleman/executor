@@ -271,6 +271,26 @@ export class CurrentPrincipal extends Context.Service<CurrentPrincipal, Principa
   "hosted/CurrentPrincipal",
 ) {}
 
+/** An API key or an OAuth grant, by the ID of its key or grant row. */
+export const BearerCredential = Schema.Struct({
+  kind: Schema.Literals(["apiKey", "grant"]),
+  id: Schema.String,
+});
+/**
+ * The credential that authenticated this request: a browser session, an API key, or an OAuth
+ * grant's token. Something created on the caller's behalf, such as an app session, can then end
+ * when that credential does. Absent outside organization routes.
+ */
+export const RequestCredential = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("session"), id: Viewer.fields.sessionId }),
+  BearerCredential,
+]);
+export type RequestCredential = typeof RequestCredential.Type;
+export const CurrentCredential = Context.Reference<RequestCredential | undefined>(
+  "hosted/CurrentCredential",
+  { defaultValue: () => undefined },
+);
+
 /** Hosted identity boundary; resource permissions remain separate product checks. */
 export class RequireBrowserSession extends HttpApiMiddleware.Service<
   RequireBrowserSession,
