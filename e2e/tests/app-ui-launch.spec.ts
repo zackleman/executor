@@ -1,8 +1,9 @@
 /**
  * A one-time launch link opens a private app page in a browser with no Executor session: the
  * link works once, for one app, within a minute, only for a caller who may open the app, and its
- * session ends with the credential that asked for it. A preview or a subresource request never spends it, a browser already
- * signed in keeps its own session, and an OAuth token gets no link.
+ * session lasts an hour at most and ends with the credential that asked for it. A preview or a
+ * subresource request never spends it, a browser already signed in keeps its own session, and an
+ * OAuth token gets no link.
  */
 import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Redacted, Schema } from "effect";
@@ -184,8 +185,9 @@ layer(HostedLive, { excludeTestServices: true })("App launch links", (it) => {
             sameSite: "Lax",
           },
         ]);
-        // As long as a session from signing in: a week, as the key that made it has no expiry.
-        expect(cookies[0]?.expires).toBeGreaterThan(Date.now() / 1000 + 6 * 24 * 60 * 60);
+        // An hour, not a signed-in week: the key that made it may outlive the agent that asked.
+        expect(cookies[0]?.expires).toBeGreaterThan(Date.now() / 1000 + 50 * 60);
+        expect(cookies[0]?.expires).toBeLessThanOrEqual(Date.now() / 1000 + 60 * 60);
         const session = cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
         const opened = yield* get(`${notes.origin}/`, { cookie: session });
         expect(opened.status).toBe(200);
@@ -244,6 +246,13 @@ layer(HostedLive, { excludeTestServices: true })("App launch links", (it) => {
         const stale = yield* body(Ready, yield* api.request(actors.owner, "POST", notes.launch));
         yield* serverControl("clock/advance", 200, { milliseconds: 61_000 });
         expect(yield* get(stale.url)).toMatchObject({ status: 401, cookie: undefined });
+
+        // A launched page's session ends after an hour, though the dashboard session lasts longer.
+        const hourly = yield* body(Ready, yield* api.request(actors.owner, "POST", notes.launch));
+        const launched = (yield* get(hourly.url)).cookie?.split(";")[0] ?? "";
+        expect((yield* get(`${notes.origin}/`, { cookie: launched })).status).toBe(200);
+        yield* serverControl("clock/advance", 200, { milliseconds: 61 * 60_000 });
+        expect((yield* get(`${notes.origin}/`, { cookie: launched })).status).toBe(401);
 
         // A link made with an API key opens a session that ends when the key is revoked.
         const key = yield* ownerKey("Launch link key");

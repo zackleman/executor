@@ -42,6 +42,8 @@ const Key = Schema.Struct({
   remaining: Schema.optional(Schema.NullOr(Schema.Number)),
   expiresAt: Schema.optional(Schema.NullOr(Schema.Date)),
 });
+const hour = 60 * 60_000;
+const week = 7 * 24 * hour;
 const Organization = Schema.Struct({ id: OrganizationId, slug: OrganizationSlug });
 const Membership = Schema.Struct({ role: OrganizationRole });
 const Stored = Schema.Struct({ value: Schema.String, expiresAt: Schema.Date });
@@ -166,17 +168,18 @@ export const hostedAppSessions = (
       const live = yield* session(parent, user);
       return { expiresAt: live.expiresAt, impersonatedBy: live.impersonatedBy };
     });
-  /** Create an app session under a checked parent, for at most a week. */
+  /** Create an app session under a checked parent, for at most `lifetime` milliseconds. */
   const open = (
     target: AppUiTarget,
     parent: AppUiParent,
     user: typeof Principal.Type.userId,
     parentExpiresAt: Date | undefined,
+    lifetime: number,
   ) =>
     Effect.gen(function* () {
       const token = yield* nonce;
-      const week = (yield* Clock.currentTimeMillis) + 7 * 24 * 60 * 60_000;
-      const expiresAt = new Date(Math.min(parentExpiresAt?.getTime() ?? week, week));
+      const latest = (yield* Clock.currentTimeMillis) + lifetime;
+      const expiresAt = new Date(Math.min(parentExpiresAt?.getTime() ?? latest, latest));
       yield* put(
         key("session", yield* digest(token)),
         { kind: "session", target, parent, user },
@@ -300,7 +303,7 @@ export const hostedAppSessions = (
         yield* Effect.all([read(attemptKey, true), read(grantKey, true)], {
           concurrency: "unbounded",
         });
-        const opened = yield* open(target, grant.parent, grant.user, parent.expiresAt);
+        const opened = yield* open(target, grant.parent, grant.user, parent.expiresAt, week);
         return { ...opened, returnTo: attempt.returnTo };
       }),
     launch: (target, user, parent) =>
@@ -323,7 +326,9 @@ export const hostedAppSessions = (
           login(launch.parent, launch.user),
           membership(launch.user, target),
         );
-        return yield* open(target, launch.parent, launch.user, parent.expiresAt);
+        // An agent may launch through the Executor app's own key, which outlives the agent's
+        // grant, so a launched page lasts an hour rather than a signed-in week.
+        return yield* open(target, launch.parent, launch.user, parent.expiresAt, hour);
       }),
     current: (target, token) =>
       Effect.gen(function* () {
